@@ -21,6 +21,25 @@ if sys.platform == "win32":
         ctypes.windll.kernel32.FreeConsole()
     except: pass
 
+# Flags pour qu'AUCUN sous-processus (os.system, shell=True, cmd.exe...)
+# ne puisse jamais faire apparaître une fenêtre console, même brièvement.
+CREATE_NO_WINDOW = 0x08000000
+_SI = None
+if sys.platform == "win32":
+    _SI = subprocess.STARTUPINFO()
+    _SI.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _SI.wShowWindow = 0  # SW_HIDE
+
+def run_hidden(cmd, **kwargs):
+    """Remplace subprocess.Popen pour TOUJOURS cacher la fenêtre, shell=True ou non."""
+    kwargs.setdefault("creationflags", CREATE_NO_WINDOW)
+    kwargs.setdefault("startupinfo", _SI)
+    return subprocess.Popen(cmd, **kwargs)
+
+def run_silent(cmd: str):
+    """Remplace os.system() par un appel qui ne crée jamais de fenêtre console."""
+    return run_hidden(cmd, shell=True)
+
 import psutil
 import keyboard
 import mouse
@@ -215,7 +234,7 @@ class ActionEngine:
 
         # ── PC ──────────────────────────────────────────────────────────────
         elif t == "open_app":
-            subprocess.Popen(a.get("path",""), shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(a.get("path",""), shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "close_app":
             n=a.get("name","").lower()
             [p.terminate() for p in psutil.process_iter(["name"]) if n in (p.info.get("name") or "").lower()]
@@ -223,20 +242,20 @@ class ActionEngine:
         elif t == "open_file":   os.startfile(a.get("path",""))
         elif t == "open_url":    webbrowser.open(a.get("url",""))
         elif t == "lock_session": keyboard.send("win+l")
-        elif t == "shutdown":    os.system("shutdown /s /t 0")
-        elif t == "restart":     os.system("shutdown /r /t 0")
-        elif t == "sleep":       os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
-        elif t == "logoff":      os.system("shutdown /l")
+        elif t == "shutdown":    run_silent("shutdown /s /t 0")
+        elif t == "restart":     run_silent("shutdown /r /t 0")
+        elif t == "sleep":       run_silent("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
+        elif t == "logoff":      run_silent("shutdown /l")
         elif t == "run_command":
-            subprocess.Popen(a.get("command",""), shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(a.get("command",""), shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "script_powershell":
-            subprocess.Popen(["powershell","-Command",a.get("code","")], creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(["powershell","-Command",a.get("code","")], creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "script_python":
             exec(a.get("code",""), {})
         elif t == "script_batch":
             tmp=os.path.join(os.environ.get("TEMP","."), "md_tmp.bat")
             open(tmp,"w").write(a.get("code",""))
-            subprocess.Popen(tmp, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(tmp, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "clean_temp":
             tmp=os.environ.get("TEMP","")
             for f in glob.glob(os.path.join(tmp,"*")):
@@ -269,7 +288,7 @@ class ActionEngine:
         elif t == "media_prev":  keyboard.send("previous track")
         elif t == "media_stop":  keyboard.send("stop media")
         elif t == "brightness":
-            subprocess.Popen(["powershell","-Command",
+            run_hidden(["powershell","-Command",
                 f"(Get-WmiObject -NS root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{a.get('value',75)})"],
                 creationflags=subprocess.CREATE_NO_WINDOW)
 
@@ -297,21 +316,21 @@ class ActionEngine:
 
         # ── DEV ─────────────────────────────────────────────────────────────
         elif t == "vscode_open":
-            subprocess.Popen(f'code "{a.get("path",".")}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(f'code "{a.get("path",".")}"', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "git_pull":
-            subprocess.Popen(f'git -C "{a.get("folder",".")}" pull', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(f'git -C "{a.get("folder",".")}" pull', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "git_push":
             f=a.get("folder","."); m=a.get("message","commit")
-            subprocess.Popen(f'git -C "{f}" add -A && git -C "{f}" commit -m "{m}" && git -C "{f}" push',
+            run_hidden(f'git -C "{f}" add -A && git -C "{f}" commit -m "{m}" && git -C "{f}" push',
                 shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "git_commit":
             f=a.get("folder","."); m=a.get("message","commit")
-            subprocess.Popen(f'git -C "{f}" add -A && git -C "{f}" commit -m "{m}"',
+            run_hidden(f'git -C "{f}" add -A && git -C "{f}" commit -m "{m}"',
                 shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "docker_start":
-            subprocess.Popen(f'docker start {a.get("name","")}', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(f'docker start {a.get("name","")}', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "docker_stop":
-            subprocess.Popen(f'docker stop {a.get("name","")}', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            run_hidden(f'docker stop {a.get("name","")}', shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         elif t == "ssh":
             subprocess.Popen(f'start cmd /k ssh {a.get("user","")}@{a.get("host","")}', shell=True)
 
@@ -549,7 +568,7 @@ class MacroDeck:
             action=pot_cfg.get("action","volume_system")
             if action=="volume_system": set_volume(val)
             elif action=="brightness":
-                subprocess.Popen(["powershell","-Command",
+                run_hidden(["powershell","-Command",
                     f"(Get-WmiObject -NS root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{val})"],
                     creationflags=subprocess.CREATE_NO_WINDOW)
             self._broadcast({"type":"pot_event","pot":idx,"value":val})
@@ -641,18 +660,83 @@ class MacroDeck:
         await asyncio.gather(self._metrics_loop(), srv.wait_closed())
 
 # ── HTTP SERVER ───────────────────────────────────────────────────────────────
+def _app_dir() -> str:
+    """Retourne le dossier où se trouve gui.html, que l'app tourne en .py
+    ou compilée en .exe (PyInstaller --onefile extrait dans sys._MEIPASS)."""
+    if getattr(sys, "frozen", False):
+        # Compilé avec PyInstaller : fichiers --add-data extraits ici
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
 def _http_server():
     import http.server, socketserver
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    web_dir = _app_dir()
     class Q(http.server.SimpleHTTPRequestHandler):
-        def log_message(self,*a): pass
-    with socketserver.TCPServer(("127.0.0.1",HTTP_PORT),Q) as h:
-        h.serve_forever()
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=web_dir, **kwargs)
+        def log_message(self, *a): pass
+    try:
+        with socketserver.TCPServer(("127.0.0.1", HTTP_PORT), Q) as h:
+            h.serve_forever()
+    except OSError:
+        pass  # port déjà pris par une instance existante, on l'ignore
+
+# ── VÉRIF INSTANCE UNIQUE ────────────────────────────────────────────────────
+def _port_is_free(port: int) -> bool:
+    import socket as _socket
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+        s.close()
+        return True
+    except OSError:
+        s.close()
+        return False
+
+def _notify_already_running():
+    """Affiche une popup native si une instance tourne déjà (sinon échec silencieux car console cachée)."""
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "MacroDeck est déjà lancé en arrière-plan.\n\n"
+                "Ouvre http://127.0.0.1:8766/gui.html dans ton navigateur pour l'utiliser.\n\n"
+                "Si ce n'est pas le cas, ouvre le Gestionnaire des tâches et termine\n"
+                "le processus MacroDeck.exe existant avant de relancer.",
+                "MacroDeck — déjà en cours",
+                0x40 | 0x1000  # MB_ICONINFORMATION | MB_TOPMOST
+            )
+        except: pass
+
+def _open_browser_when_ready():
+    """Attend que le serveur HTTP réponde puis ouvre le navigateur sur la GUI."""
+    import urllib.request
+    url = f"http://127.0.0.1:{HTTP_PORT}/gui.html"
+    for _ in range(40):  # ~10s max
+        try:
+            urllib.request.urlopen(url, timeout=0.5)
+            webbrowser.open(url)
+            return
+        except Exception:
+            time.sleep(0.25)
+    # Dernier recours : on ouvre quand même, au cas où le check ait raté
+    webbrowser.open(url)
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 if __name__=="__main__":
-    threading.Thread(target=_http_server,daemon=True).start()
-    # NE PAS ouvrir le navigateur automatiquement
+    if not _port_is_free(WS_PORT):
+        _notify_already_running()
+        sys.exit(0)
+
+    threading.Thread(target=_http_server, daemon=True).start()
+    threading.Thread(target=_open_browser_when_ready, daemon=True).start()
+
     deck=MacroDeck()
-    try: asyncio.run(deck.run())
-    except KeyboardInterrupt: pass
+    try:
+        asyncio.run(deck.run())
+    except KeyboardInterrupt:
+        pass
+    except OSError as e:
+        # Sécurité supplémentaire si le port se libère/reprend entre la vérif et le bind réel
+        _notify_already_running()
+        sys.exit(0)
