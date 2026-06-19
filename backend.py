@@ -57,10 +57,11 @@ try:
     WIN32_OK = True
 except: WIN32_OK = False
 
-try:
-    import GPUtil
-    GPU_OK = True
-except: GPU_OK = False
+# GPUtil est volontairement RETIRÉ : il lance "nvidia-smi" en interne via
+# subprocess SANS masquer la fenêtre console, ce qui provoquait le
+# clignotement répété (la boucle de métriques tourne chaque seconde).
+# On lit nvidia-smi nous-mêmes avec run_hidden() qui garantit STARTF_USESHOWWINDOW.
+GPU_OK = shutil.which("nvidia-smi") is not None
 
 try:
     import wmi as wmilib
@@ -418,6 +419,23 @@ class Metrics:
             try: self._ohm=wmilib.WMI(namespace="root\\OpenHardwareMonitor")
             except: pass
 
+    def _read_nvidia_smi(self):
+        """Lit usage/vram/temp/nom GPU via nvidia-smi, fenêtre TOUJOURS cachée."""
+        try:
+            p = run_hidden(
+                ["nvidia-smi",
+                 "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name",
+                 "--format=csv,noheader,nounits"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            out, _ = p.communicate(timeout=2)
+            line = out.strip().split("\n")[0]
+            usage, mem_used, mem_total, temp, name = [x.strip() for x in line.split(",")]
+            vram_pct = round(float(mem_used) / float(mem_total) * 100, 1) if float(mem_total) else 0
+            return {"usage": float(usage), "vram": vram_pct, "temp": float(temp), "name": name}
+        except Exception:
+            return None
+
     def collect(self):
         m={}
         m["cpu"]       = psutil.cpu_percent(interval=None)
@@ -433,10 +451,10 @@ class Metrics:
         m["gpu_usage"]=0; m["gpu_vram"]=0; m["gpu_temp"]=None; m["gpu_name"]=""
         if GPU_OK:
             try:
-                gpus=GPUtil.getGPUs()
-                if gpus:
-                    g=gpus[0]; m["gpu_usage"]=round(g.load*100,1)
-                    m["gpu_vram"]=round(g.memoryUtil*100,1); m["gpu_temp"]=g.temperature; m["gpu_name"]=g.name
+                gpu = self._read_nvidia_smi()
+                if gpu:
+                    m["gpu_usage"]=gpu["usage"]; m["gpu_vram"]=gpu["vram"]
+                    m["gpu_temp"]=gpu["temp"]; m["gpu_name"]=gpu["name"]
             except: pass
 
         m["ssd_usage"]=0
@@ -630,6 +648,7 @@ class MacroDeck:
             name=msg.get("profile","")
             if name in self.cfg.data["profiles"]:
                 self.cfg.data["active_profile"]=name
+                self.cfg.save()
                 self._broadcast({"type":"profile_changed","profile":name})
 
         elif t=="test_action":
@@ -740,3 +759,10 @@ if __name__=="__main__":
         # Sécurité supplémentaire si le port se libère/reprend entre la vérif et le bind réel
         _notify_already_running()
         sys.exit(0)
+    finally:
+        # Sauvegarde finale en sécurité : chaque modification est déjà écrite
+        # sur disque immédiatement (cfg.save() est synchrone), mais on
+        # s'assure ici qu'aucun état en mémoire ne se perd à la fermeture
+        # (Ctrl+C, fermeture du processus, arrêt système...).
+        try: deck.cfg.save()
+        except: pass
