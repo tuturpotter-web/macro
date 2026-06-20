@@ -40,6 +40,24 @@ def run_silent(cmd: str):
     """Remplace os.system() par un appel qui ne crée jamais de fenêtre console."""
     return run_hidden(cmd, shell=True)
 
+def open_url_default(url: str):
+    """Ouvre une URL avec le navigateur PAR DÉFAUT de Windows, de façon fiable.
+    os.startfile() délègue directement au shell Windows (ShellExecute), qui
+    respecte toujours l'association ".html"/"http" configurée dans Windows —
+    contrairement à webbrowser.open() qui peut dans certains environnements
+    (notamment une fois compilé en .exe avec PyInstaller) se tromper de
+    navigateur ou échouer silencieusement selon ce qu'il détecte au démarrage."""
+    if not url: return
+    try:
+        if sys.platform == "win32":
+            os.startfile(url)
+        else:
+            webbrowser.open(url)
+    except Exception as e:
+        log.error(f"open_url_default('{url}'): {e}")
+        try: webbrowser.open(url)
+        except: pass
+
 import psutil
 import keyboard
 import mouse
@@ -401,7 +419,7 @@ class ActionEngine:
             [p.terminate() for p in psutil.process_iter(["name"]) if n in (p.info.get("name") or "").lower()]
         elif t == "open_folder": os.startfile(a.get("path","."))
         elif t == "open_file":   os.startfile(a.get("path",""))
-        elif t == "open_url":    webbrowser.open(a.get("url",""))
+        elif t == "open_url":    open_url_default(a.get("url",""))
         elif t == "lock_session": keyboard.send("win+l")
         elif t == "shutdown":    run_silent("shutdown /s /t 0")
         elif t == "restart":     run_silent("shutdown /r /t 0")
@@ -496,10 +514,10 @@ class ActionEngine:
             subprocess.Popen(f'start cmd /k ssh {a.get("user","")}@{a.get("host","")}', shell=True)
 
         # ── WEB / IA ────────────────────────────────────────────────────────
-        elif t == "open_url" or t == "open_chatgpt": webbrowser.open(a.get("url","https://chatgpt.com"))
-        elif t == "google_gmail":    webbrowser.open("https://mail.google.com")
-        elif t == "google_meet":     webbrowser.open("https://meet.google.com/new")
-        elif t == "google_calendar": webbrowser.open("https://calendar.google.com")
+        elif t == "open_chatgpt":    open_url_default(a.get("url","https://chatgpt.com"))
+        elif t == "google_gmail":    open_url_default("https://mail.google.com")
+        elif t == "google_meet":     open_url_default("https://meet.google.com/new")
+        elif t == "google_calendar": open_url_default("https://calendar.google.com")
 
         # ── TIMER ───────────────────────────────────────────────────────────
         elif t == "timer":
@@ -687,7 +705,7 @@ class AppWatcher:
 # ── SERIAL ────────────────────────────────────────────────────────────────────
 class Transport:
     def __init__(self, on_msg):
-        self._cb=on_msg; self.ser=None
+        self._cb=on_msg; self.ser=None; self.port_name=None
 
     def start(self, port="AUTO"):
         if not SERIAL_OK: return
@@ -698,15 +716,23 @@ class Transport:
         if not port: return
         try:
             self.ser=serial.Serial(port,115200,timeout=0.1)
+            self.port_name=port
             threading.Thread(target=self._loop,daemon=True).start()
-        except Exception as e: log.error(f"Serial: {e}")
+        except Exception as e:
+            log.error(f"Serial: {e}")
+            self.port_name=None
+
+    def is_connected(self) -> bool:
+        return bool(self.ser and self.ser.is_open)
 
     def _loop(self):
         while self.ser and self.ser.is_open:
             try:
                 line=self.ser.readline().decode("utf-8",errors="ignore").strip()
                 if line: self._cb(line)
-            except: time.sleep(1)
+            except:
+                time.sleep(1)
+        self.port_name=None
 
     def send(self, obj):
         if self.ser and self.ser.is_open:
@@ -1008,6 +1034,12 @@ class MacroDeck:
 
         elif t=="connect_serial":
             self.transport.start(msg.get("port","AUTO"))
+            await ws.send(json.dumps({"type":"serial_status",
+                "connected":self.transport.is_connected(), "port":self.transport.port_name}))
+
+        elif t=="get_serial_status":
+            await ws.send(json.dumps({"type":"serial_status",
+                "connected":self.transport.is_connected(), "port":self.transport.port_name}))
 
         elif t=="update_button":
             pid=msg.get("profile","default"); bid=str(msg.get("button",0))
@@ -1044,7 +1076,12 @@ class MacroDeck:
 
     async def run(self):
         self.transport.start(self.cfg.data.get("serial_port","AUTO"))
-        srv=await websockets.serve(self._ws_handler,"localhost",WS_PORT)
+        # max_size augmenté : la config peut contenir des icônes de boutons
+        # personnalisées encodées en base64 (plusieurs dizaines de Ko chacune,
+        # potentiellement nombreuses avec plusieurs profils/pages). La limite
+        # par défaut de la lib (1 Mo) suffirait en usage normal mais on prend
+        # de la marge pour ne jamais subir de déconnexion silencieuse.
+        srv=await websockets.serve(self._ws_handler,"localhost",WS_PORT,max_size=10*1024*1024)
         await asyncio.gather(self._metrics_loop(), srv.wait_closed())
 
 # ── HTTP SERVER ───────────────────────────────────────────────────────────────
