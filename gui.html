@@ -772,6 +772,7 @@ function setWS(ok) {
 function wsSend(obj) { if(ws&&ws.readyState===1) ws.send(JSON.stringify(obj)); }
 connectWS();
 setTimeout(()=>wsSend({type:"get_plugins"}), 500);
+setTimeout(()=>wsSend({type:"get_apps"}), 800); // préchargement en arrière-plan
 
 // ═══════════════════════════════════════════════════════════════
 // PLUGINS — actions ajoutées dynamiquement sans recompiler l'app.
@@ -1300,7 +1301,7 @@ function selectAct(type){
     if(p.special==="app_picker") return `<div class="p-row"><div class="p-lbl">${p.lbl}</div><div style="flex:1">
       <input class="p-inp" style="width:100%;margin-bottom:5px" id="param_${p.key}" placeholder="${p.ph||""}" oninput="selActObj.params['${p.key}']=this.value">
       <input class="app-srch" id="appSrch" placeholder="🔍 Filtrer les apps..." oninput="filterAppPicker(this.value)">
-      <div class="app-lst" id="appLst">${appsLoaded?"":"<div style='padding:14px;text-align:center;font-size:11px;color:var(--text3)'>Chargement...</div>"}</div>
+      <div class="app-lst" id="appLst">${appsLoaded?"":"<div style='padding:14px;text-align:center;font-size:11px;color:var(--text3)'>⏳ Scan des applications installées en cours...<br><span style='font-size:9px'>(peut prendre quelques secondes la première fois)</span><br><button class=\"picker-load-btn\" style=\"margin-top:8px;width:auto;padding:4px 10px\" onclick=\"wsSend({type:'get_apps'})\">🔄 Réessayer</button></div>"}</div>
     </div></div>`;
     if(p.special==="process_picker") return `<div class="p-row"><div class="p-lbl">${p.lbl}</div><div style="flex:1">
       <input class="p-inp" style="width:100%;margin-bottom:5px" id="param_${p.key}" placeholder="${p.ph||""}" oninput="selActObj.params['${p.key}']=this.value">
@@ -1392,6 +1393,7 @@ function applyPickedPath(field,path){
 
 function renderAppPicker(){
   const lst=document.getElementById("appLst"); if(!lst) return;
+  if(!installedApps.length){lst.innerHTML="<div style='padding:14px;text-align:center;font-size:11px;color:var(--text3)'>Aucune application détectée.<br>Tu peux quand même saisir le chemin manuellement ci-dessus.</div>";return;}
   lst.innerHTML=installedApps.slice(0,200).map(a=>`<div class="app-e" onclick="pickApp('${a.path.replace(/\\/g,"\\\\").replace(/'/g,"\\'")}','${a.name.replace(/'/g,"\\'")}')"><span class="app-e-nm">${a.name}</span><span class="app-e-tp">${a.type}</span></div>`).join("");
 }
 function filterAppPicker(q){
