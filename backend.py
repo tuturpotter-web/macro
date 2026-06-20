@@ -150,18 +150,29 @@ def list_audio_sessions():
 def get_installed_apps():
     apps=[]; seen=set()
     def add(name, path, kind):
-        k=name.lower().strip()
-        if k and k not in seen:
-            seen.add(k); apps.append({"name":name,"path":path,"type":kind})
+        try:
+            k=name.lower().strip()
+            if k and k not in seen:
+                seen.add(k); apps.append({"name":name,"path":path,"type":kind})
+        except: pass
 
-    for base in [
-        os.path.join(os.environ.get("APPDATA",""),"Microsoft","Windows","Start Menu","Programs"),
-        r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs"]:
-        if os.path.isdir(base):
-            for r,_,files in os.walk(base):
-                for f in files:
-                    if f.endswith(".lnk"): add(f[:-4], os.path.join(r,f), "lnk")
+    # Menu Démarrer (.lnk) — protégé : un dossier verrouillé ou un raccourci
+    # corrompu ne doit jamais faire planter tout le scan.
+    try:
+        for base in [
+            os.path.join(os.environ.get("APPDATA",""),"Microsoft","Windows","Start Menu","Programs"),
+            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs"]:
+            try:
+                if os.path.isdir(base):
+                    for r,_,files in os.walk(base):
+                        for f in files:
+                            if f.endswith(".lnk"): add(f[:-4], os.path.join(r,f), "lnk")
+            except Exception as e:
+                log.warning(f"get_installed_apps menu démarrer '{base}': {e}")
+    except Exception as e:
+        log.error(f"get_installed_apps menu démarrer: {e}")
 
+    # Registre Windows (apps installées avec DisplayName/DisplayIcon)
     try:
         import winreg
         for hive in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
@@ -180,16 +191,25 @@ def get_installed_apps():
                             i+=1
                         except OSError: break
                 except: pass
-    except: pass
+    except Exception as e:
+        log.warning(f"get_installed_apps registre: {e}")
 
+    # Program Files / dossiers locaux — protégé individuellement par dossier,
+    # un sous-dossier inaccessible (permissions) ne bloque pas les suivants.
     for base in [r"C:\Program Files",r"C:\Program Files (x86)",
                  os.path.join(os.environ.get("LOCALAPPDATA",""),"Programs")]:
-        if os.path.isdir(base):
-            for d in os.listdir(base):
-                full=os.path.join(base,d)
-                if os.path.isdir(full):
-                    for f in os.listdir(full):
-                        if f.endswith(".exe"): add(f[:-4],os.path.join(full,f),"exe")
+        try:
+            if os.path.isdir(base):
+                for d in os.listdir(base):
+                    try:
+                        full=os.path.join(base,d)
+                        if os.path.isdir(full):
+                            for f in os.listdir(full):
+                                if f.endswith(".exe"): add(f[:-4],os.path.join(full,f),"exe")
+                    except Exception as e:
+                        log.warning(f"get_installed_apps '{d}': {e}")
+        except Exception as e:
+            log.warning(f"get_installed_apps base '{base}': {e}")
 
     apps.sort(key=lambda x:x["name"].lower())
     return apps
@@ -927,8 +947,19 @@ class MacroDeck:
             await ws.send(json.dumps({"type":"ports","data":ports}))
 
         elif t=="get_apps":
-            apps=get_installed_apps()
-            await ws.send(json.dumps({"type":"apps","data":apps}))
+            # Le scan complet (menu démarrer + registre + Program Files) peut
+            # prendre plusieurs secondes : on l'exécute dans un thread pour ne
+            # jamais geler la boucle asyncio (sinon plus rien ne répond pendant
+            # le scan, donnant l'impression que le picker ne s'affiche jamais).
+            async def _do_get_apps():
+                loop = asyncio.get_event_loop()
+                try:
+                    apps = await loop.run_in_executor(None, get_installed_apps)
+                except Exception as e:
+                    log.error(f"get_apps: {e}")
+                    apps = []
+                await ws.send(json.dumps({"type":"apps","data":apps}))
+            asyncio.ensure_future(_do_get_apps())
 
         elif t=="get_plugins":
             await ws.send(json.dumps({"type":"plugins","data":self.plugins.catalog(),
