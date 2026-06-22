@@ -1395,11 +1395,20 @@ def _http_server():
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=web_dir, **kwargs)
         def log_message(self, *a): pass
+        def end_headers(self):
+            # Désactive complètement le cache navigateur pour gui.html :
+            # sans ça, le navigateur sert l'ancien fichier mis en cache
+            # même après un rebuild/redéploiement, ce qui donnait l'impression
+            # que les corrections CSS n'étaient pas appliquées.
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+            super().end_headers()
     try:
         with socketserver.TCPServer(("127.0.0.1", HTTP_PORT), Q) as h:
             h.serve_forever()
     except OSError:
-        pass  # port déjà pris par une instance existante, on l'ignore
+        pass
 
 # ── VÉRIF INSTANCE UNIQUE ────────────────────────────────────────────────────
 def _port_is_free(port: int) -> bool:
