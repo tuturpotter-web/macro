@@ -379,7 +379,7 @@ class ActionEngine:
 
             elif action == "obs_volume":
                 # Volume d'une source OBS (0-100 → -100dB..0dB approximatif)
-                self._obs(pot_cfg.get("source","Mic/Aux"), val)
+                self._obs_pot_volume(pot_cfg.get("source","Mic/Aux"), val)
 
             elif action == "scroll":
                 # Défilement proportionnel à l'écart depuis le dernier appel
@@ -442,7 +442,8 @@ class ActionEngine:
         except Exception as e:
             log.error(f"Pot action '{action}': {e}")
 
-    def _obs(self, source, val):
+    def _obs_pot_volume(self, source, val):
+        """Règle le volume d'une source OBS via WebSocket (appelé depuis run_pot)."""
         try:
             import websocket as _ws
             db = round((val/100)*100 - 100, 1)  # 0-100 → -100dB..0dB
@@ -832,51 +833,102 @@ class ProfileOverlayWindow:
         try: win.attributes("-alpha", 0.95)
         except: pass
 
-        bg="#14151b"; card="#1c1f29"; accent="#6366f1"; fg="#f1f5f9"; sub="#94a3b8"
+        bg="#14151b"; card="#1c1f29"; accent="#6366f1"; fg="#f1f5f9"; sub="#94a3b8"; pot_bg="#1a1d27"
         win.configure(bg=bg)
 
-        sw=win.winfo_screenwidth(); sh=win.winfo_screenheight()
-        width, height = 240, 170
-        x=sw-width-20; y=sh-height-60
-        win.geometry(f"{width}x{height}+{x}+{y}")
+        # Dimensions : 4 colonnes de 52px + marges → 240px de large
+        # 2 rangées boutons (52px chacune) + séparateur + rangée potards (52px) + header + marges → ~230px
+        cell_w, cell_h = 52, 52
+        cols = 4
+        pad = 8
+        width = cols * cell_w + (cols - 1) * 3 + pad * 2  # ~232
+        width = max(width, 240)
 
-        # Bordure arrondie simulée via highlightbackground
+        sw = win.winfo_screenwidth(); sh = win.winfo_screenheight()
+        x = sw - width - 20; y = sh - 20  # on calculera y après avoir construit
+
+        # On construit d'abord, puis on positionne après update
+        win.geometry(f"{width}x1+{x}+{y}")  # hauteur temporaire
+
         win.config(highlightbackground=accent, highlightcolor=accent, highlightthickness=1)
 
-        # ── Header : point coloré + nom du profil ──────────────────────────
+        # ── Header ─────────────────────────────────────────────────────────
         header = tk.Frame(win, bg=bg)
-        header.pack(fill="x", padx=10, pady=(8,6))
+        header.pack(fill="x", padx=pad, pady=(8, 4))
         tk.Label(header, text="●", fg=accent, bg=bg, font=("Segoe UI", 8)).pack(side="left")
-        tk.Label(header, text=profile.get("name","Profil"), fg=fg, bg=bg,
-                 font=("Segoe UI", 11, "bold")).pack(side="left", padx=(5,0))
+        tk.Label(header, text=profile.get("name", "Profil"), fg=fg, bg=bg,
+                 font=("Segoe UI", 11, "bold")).pack(side="left", padx=(5, 0))
 
-        # Séparateur
-        sep = tk.Frame(win, bg=accent, height=1)
-        sep.pack(fill="x", padx=10, pady=(0,6))
+        tk.Frame(win, bg=accent, height=1).pack(fill="x", padx=pad, pady=(0, 6))
 
-        # ── Grille 4×2 des boutons ─────────────────────────────────────────
-        grid = tk.Frame(win, bg=bg)
-        grid.pack(padx=8, pady=(0,8))
+        # ── Grille 4×2 boutons ─────────────────────────────────────────────
+        btn_frame = tk.Frame(win, bg=bg)
+        btn_frame.pack(padx=pad, pady=(0, 4))
 
         buttons = profile.get("buttons", {})
         for i in range(8):
             b = buttons.get(str(i), {})
-            r, c = divmod(i, 4)
+            row, col = divmod(i, 4)
 
-            cell = tk.Frame(grid, bg=card, width=50, height=50,
+            cell = tk.Frame(btn_frame, bg=card, width=cell_w, height=cell_h,
                             highlightthickness=1, highlightbackground="#ffffff18")
-            cell.grid(row=r, column=c, padx=2, pady=2)
+            cell.grid(row=row, column=col, padx=2, pady=2)
             cell.grid_propagate(False)
 
-            icon = b.get("icon","⭐") or "⭐"
-            label = (b.get("label") or f"Btn {i+1}")[:8]
+            icon  = b.get("icon", "⭐") or "⭐"
+            label = (b.get("label") or f"Btn {i+1}")[:9]
 
-            tk.Label(cell, text=icon, fg=fg, bg=card,
-                     font=("Segoe UI Emoji", 14)).place(relx=.5, rely=.38, anchor="center")
-            tk.Label(cell, text=label, fg=sub, bg=card,
-                     font=("Segoe UI", 6)).place(relx=.5, rely=.78, anchor="center")
+            tk.Label(cell, text=icon,  fg=fg,  bg=card, font=("Segoe UI Emoji", 14)).place(relx=.5, rely=.36, anchor="center")
+            tk.Label(cell, text=label, fg=sub, bg=card, font=("Segoe UI", 6)).place(relx=.5, rely=.78, anchor="center")
 
-        # ── Fermeture après 3s ─────────────────────────────────────────────
+        # Séparateur boutons / potards
+        tk.Frame(win, bg="#ffffff14", height=1).pack(fill="x", padx=pad, pady=(2, 4))
+
+        # ── Rangée potards ─────────────────────────────────────────────────
+        pot_frame = tk.Frame(win, bg=bg)
+        pot_frame.pack(padx=pad, pady=(0, 8))
+
+        pot_action_short = {
+            "volume_system": "Vol. sys", "volume_app": "Vol. app",
+            "brightness": "Luminosité", "custom": "Custom",
+            "scroll": "Scroll", "zoom_level": "Zoom",
+            "media_seek": "Seek", "playback_speed": "Speed",
+            "discord_volume": "Discord", "spotify_volume": "Spotify",
+            "game_volume": "Jeu", "mic_volume": "Micro",
+            "obs_volume": "OBS vol", "led_strip_color": "LED",
+        }
+        pots = profile.get("pots", {})
+        for i in range(4):
+            p = pots.get(str(i), {})
+            pot_name   = (p.get("name") or f"Pot {i+1}")[:9]
+            pot_action = pot_action_short.get(p.get("action", ""), p.get("action", "")[:8] or "—")
+
+            cell = tk.Frame(pot_frame, bg=pot_bg, width=cell_w, height=cell_h,
+                            highlightthickness=1, highlightbackground="#ffffff14")
+            cell.grid(row=0, column=i, padx=2, pady=0)
+            cell.grid_propagate(False)
+
+            # Mini-cercle symbolisant le potard
+            try:
+                canvas = tk.Canvas(cell, width=22, height=22, bg=pot_bg,
+                                   highlightthickness=0, bd=0)
+                canvas.place(relx=.5, rely=.25, anchor="center")
+                canvas.create_oval(2, 2, 20, 20, outline=accent, width=1.5, fill="#0c0d10")
+                canvas.create_oval(9, 9, 13, 13, fill=accent, outline="")
+            except Exception:
+                tk.Label(cell, text="◎", fg=accent, bg=pot_bg,
+                         font=("Segoe UI", 10)).place(relx=.5, rely=.25, anchor="center")
+
+            tk.Label(cell, text=pot_name,   fg=fg,  bg=pot_bg, font=("Segoe UI", 6, "bold")).place(relx=.5, rely=.62, anchor="center")
+            tk.Label(cell, text=pot_action, fg=sub, bg=pot_bg, font=("Segoe UI", 5)).place(relx=.5, rely=.83, anchor="center")
+
+        # Ajustement de la hauteur et position finale après construction
+        win.update_idletasks()
+        height = win.winfo_reqheight()
+        y = sh - height - 60
+        win.geometry(f"{width}x{height}+{x}+{y}")
+
+        # ── Fermeture après 3 s ────────────────────────────────────────────
         def _close():
             self._close_timer = None
             try:
