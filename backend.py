@@ -816,10 +816,6 @@ class ProfileOverlayWindow:
         root = self._root
         if not root: return
 
-        # Annule proprement le timer de fermeture ET détruit l'ancienne popup
-        # AVANT d'en créer une neuve : sans after_cancel, l'ancien timer Tk
-        # continue d'exister et peut référencer un widget déjà détruit,
-        # ce qui empêchait la popup de se fermer correctement.
         if getattr(self, "_close_timer", None):
             try: root.after_cancel(self._close_timer)
             except: pass
@@ -831,26 +827,56 @@ class ProfileOverlayWindow:
 
         win = tk.Toplevel(root)
         self._popup = win
-        win.overrideredirect(True)       # pas de barre de titre/bordure
-        win.attributes("-topmost", True) # toujours au-dessus de TOUTES les fenêtres, y compris jeux/plein écran
-        try: win.attributes("-alpha", 0.92)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        try: win.attributes("-alpha", 0.95)
         except: pass
 
-        # Juste une présence visuelle minimale (pas de contenu/grille de
-        # boutons) : un petit indicateur "changement de profil en cours".
-        bg = "#14151b"; accent = "#6366f1"
+        bg="#14151b"; card="#1c1f29"; accent="#6366f1"; fg="#f1f5f9"; sub="#94a3b8"
         win.configure(bg=bg)
 
-        sw = win.winfo_screenwidth(); sh = win.winfo_screenheight()
-        width, height = 14, 14
-        x = sw - width - 24
-        y = sh - height - 60  # au-dessus de la barre des tâches
+        sw=win.winfo_screenwidth(); sh=win.winfo_screenheight()
+        width, height = 240, 170
+        x=sw-width-20; y=sh-height-60
         win.geometry(f"{width}x{height}+{x}+{y}")
-        win.config(highlightbackground=accent, highlightcolor=accent, highlightthickness=2)
 
-        # Fermeture garantie après EXACTEMENT 3 secondes, avec id de timer
-        # mémorisé pour pouvoir l'annuler proprement si un nouveau profil
-        # arrive avant l'échéance (évite toute popup fantôme qui reste affichée).
+        # Bordure arrondie simulée via highlightbackground
+        win.config(highlightbackground=accent, highlightcolor=accent, highlightthickness=1)
+
+        # ── Header : point coloré + nom du profil ──────────────────────────
+        header = tk.Frame(win, bg=bg)
+        header.pack(fill="x", padx=10, pady=(8,6))
+        tk.Label(header, text="●", fg=accent, bg=bg, font=("Segoe UI", 8)).pack(side="left")
+        tk.Label(header, text=profile.get("name","Profil"), fg=fg, bg=bg,
+                 font=("Segoe UI", 11, "bold")).pack(side="left", padx=(5,0))
+
+        # Séparateur
+        sep = tk.Frame(win, bg=accent, height=1)
+        sep.pack(fill="x", padx=10, pady=(0,6))
+
+        # ── Grille 4×2 des boutons ─────────────────────────────────────────
+        grid = tk.Frame(win, bg=bg)
+        grid.pack(padx=8, pady=(0,8))
+
+        buttons = profile.get("buttons", {})
+        for i in range(8):
+            b = buttons.get(str(i), {})
+            r, c = divmod(i, 4)
+
+            cell = tk.Frame(grid, bg=card, width=50, height=50,
+                            highlightthickness=1, highlightbackground="#ffffff18")
+            cell.grid(row=r, column=c, padx=2, pady=2)
+            cell.grid_propagate(False)
+
+            icon = b.get("icon","⭐") or "⭐"
+            label = (b.get("label") or f"Btn {i+1}")[:8]
+
+            tk.Label(cell, text=icon, fg=fg, bg=card,
+                     font=("Segoe UI Emoji", 14)).place(relx=.5, rely=.38, anchor="center")
+            tk.Label(cell, text=label, fg=sub, bg=card,
+                     font=("Segoe UI", 6)).place(relx=.5, rely=.78, anchor="center")
+
+        # ── Fermeture après 3s ─────────────────────────────────────────────
         def _close():
             self._close_timer = None
             try:
@@ -1319,10 +1345,45 @@ class MacroDeck:
                 await ws.send(json.dumps({"type":"protocol_test_result","ok":False,"error":str(e)}))
 
         elif t=="simulate_esp32_frame":
-            # Injecte une trame brute comme si elle venait réellement de
-            # l'ESP32, pour tester boutons/potards sans matériel connecté.
-            raw = msg.get("raw","")
+            raw = msg.get("raw","").strip()
+            if not raw:
+                await ws.send(json.dumps({"type":"protocol_test_result","ok":False,"error":"Trame vide"}))
+                return
+            # On teste d'abord quel patron correspond (pour l'affichage),
+            # puis on exécute vraiment la trame comme si elle venait de l'ESP32.
+            proto = self.cfg.data.get("protocol", {})
+            matched_event = None
+            matched_groups = {}
+            for ev_key, ev_name in [("in_press","press"),("in_long_press","long_press"),
+                                     ("in_double_click","double_click"),("in_release","release"),
+                                     ("in_pot","pot")]:
+                pat = proto.get(ev_key,"")
+                if not pat: continue
+                try:
+                    m2 = pattern_to_regex(pat).match(raw)
+                    if m2:
+                        matched_event = ev_name
+                        matched_groups = m2.groupdict()
+                        break
+                except: continue
+            # Tente aussi le fallback JSON
+            if not matched_event:
+                try:
+                    parsed = json.loads(raw)
+                    t2 = parsed.get("t","")
+                    if t2 in ("press","long_press","double_click","release","pot"):
+                        matched_event = t2
+                        matched_groups = {k:v for k,v in parsed.items() if k!="t"}
+                except: pass
+            # Exécute la trame
             self._on_esp32(raw)
+            if matched_event:
+                await ws.send(json.dumps({"type":"protocol_test_result","ok":True,
+                    "event":matched_event,"groups":matched_groups,
+                    "message":f"Trame reconnue comme '{matched_event}' et exécutée ✓"}))
+            else:
+                await ws.send(json.dumps({"type":"protocol_test_result","ok":False,
+                    "error":"Aucun patron ne correspond à cette trame (trame envoyée quand même)"}))
 
         elif t=="update_button":
             pid=msg.get("profile","default"); bid=str(msg.get("button",0))
