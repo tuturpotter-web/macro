@@ -1904,11 +1904,11 @@ function handleProtocolTestResult(m){
   const res = document.getElementById("protoTestResult");
   if(!res) return;
   if(m.ok){
-    res.textContent="✓ Trame reconnue — "+JSON.stringify(m.groups);
-    res.style.color="var(--green)";
+    const groups = Object.entries(m.groups||{}).map(([k,v])=>`${k}=${v}`).join(", ");
+    res.innerHTML = `<span style="color:var(--green)">✓ ${m.message||"Trame reconnue"}</span>`
+      + (groups ? `<br><span style="color:var(--text3);font-family:'JetBrains Mono',monospace">${groups}</span>` : "");
   } else {
-    res.textContent="✗ "+(m.error||"Aucun patron ne correspond à cette trame");
-    res.style.color="var(--red)";
+    res.innerHTML = `<span style="color:var(--red)">✗ ${m.error||"Aucun patron ne correspond"}</span>`;
   }
 }
 
