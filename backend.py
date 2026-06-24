@@ -799,9 +799,10 @@ class ProfileOverlayWindow:
         def poll():
             try:
                 while True:
-                    profile = self._queue.get_nowait()
+                    item = self._queue.get_nowait()
+                    profile, ov_cfg = item if isinstance(item, tuple) else (item, {})
                     try:
-                        self._show(profile)
+                        self._show(profile, ov_cfg)
                     except Exception as e:
                         log.warning(f"Overlay _show: {e}")
             except _queue.Empty:
@@ -811,7 +812,7 @@ class ProfileOverlayWindow:
         root.after(100, poll)
         root.mainloop()
 
-    def _show(self, profile: dict):
+    def _show(self, profile: dict, ov_cfg: dict = None):
         import tkinter as tk
         root = self._root
         if not root: return
@@ -825,44 +826,53 @@ class ProfileOverlayWindow:
             except: pass
             self._popup = None
 
+        ov       = ov_cfg or {}
+        CELL     = max(32, min(100, int(ov.get("cell_size", 56))))
+        DELAY    = max(1,  min(30,  int(ov.get("delay", 3)))) * 1000
+        POSITION = ov.get("position", "br")
+        ALPHA    = max(0.2, min(1.0, int(ov.get("alpha", 97)) / 100))
+        OV_POTS  = ov.get("pots", {})
+
         BG  = "#0d0e12"; CARD = "#1c1f29"; ACC = "#6366f1"
         FG  = "#f1f5f9"; FG3  = "#94a3b8"; BG3 = "#181b22"
         BG4 = "#1e212b"; BDR  = "#2a2d3a"
-
-        CELL=56; PAD=10; GAP=4; COLS=4
+        PAD=10; GAP=4; COLS=4
         W = COLS*CELL + (COLS-1)*GAP + PAD*2
         H = 38 + 1 + 8 + CELL*2 + GAP + 8 + 1 + 8 + CELL + 12
 
         sw = root.winfo_screenwidth(); sh = root.winfo_screenheight()
-        X = sw - W - 20;  Y = sh - H - 60
+        mg = 20
+        if   POSITION=="br": X=sw-W-mg; Y=sh-H-60
+        elif POSITION=="bl": X=mg;       Y=sh-H-60
+        elif POSITION=="tr": X=sw-W-mg; Y=mg+40
+        else:                 X=mg;       Y=mg+40
 
         win = tk.Toplevel(root)
         self._popup = win
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        try: win.attributes("-alpha", 0.97)
+        try: win.attributes("-alpha", ALPHA)
         except: pass
-        # Fond accent = bordure 1px visible tout autour
         win.configure(bg=ACC)
         win.geometry(f"{W}x{H}+{X}+{Y}")
 
-        # Frame principal avec marge 1px → révèle la bordure accent du fond
         main = tk.Frame(win, bg=BG)
         main.pack(padx=1, pady=1, fill="both", expand=True)
+        win._imgs = []  # Evite le GC des PhotoImage
 
         # ── Header ────────────────────────────────────────────────────────
         hdr = tk.Frame(main, bg=BG)
         hdr.pack(fill="x", padx=PAD, pady=(7,4))
         dot = tk.Canvas(hdr, width=8, height=8, bg=BG, highlightthickness=0)
         dot.pack(side="left", pady=1)
-        dot.create_oval(0, 0, 8, 8, fill=ACC, outline="")
+        dot.create_oval(0,0,8,8, fill=ACC, outline="")
         tk.Label(hdr, text=profile.get("name","Profil"), fg=FG, bg=BG,
                  font=("Segoe UI",10,"bold")).pack(side="left", padx=(6,0))
         tk.Label(hdr, text="PROFIL", fg=ACC, bg=BG,
                  font=("Segoe UI",7,"bold")).pack(side="right")
         tk.Frame(main, bg=BDR, height=1).pack(fill="x")
 
-        # ── Grille boutons 4×2 ────────────────────────────────────────────
+        # ── Boutons 4×2 ───────────────────────────────────────────────────
         bf = tk.Frame(main, bg=BG)
         bf.pack(padx=PAD, pady=(8,0))
         buttons = profile.get("buttons", {})
@@ -874,14 +884,35 @@ class ProfileOverlayWindow:
             cell = tk.Frame(outer, bg=CARD, width=CELL-2, height=CELL-2)
             cell.pack(padx=1, pady=1)
             cell.pack_propagate(False)
-            icon  = b.get("icon","") or "●"
             label = (b.get("label") or f"Btn {i+1}")[:9]
-            tk.Label(cell, text=icon,  fg=FG,  bg=CARD,
-                     font=("Segoe UI Emoji",15)).place(relx=.5, rely=.36, anchor="center")
-            tk.Label(cell, text=label, fg=FG3, bg=CARD,
-                     font=("Segoe UI",6)).place(relx=.5, rely=.78, anchor="center")
+            img_data = b.get("iconImage","")
+            placed = False
+            if img_data and img_data.startswith("data:image"):
+                try:
+                    import io, base64 as b64
+                    raw = b64.b64decode(img_data[img_data.index(",")+1:])
+                    sz  = max(CELL-16, 18)
+                    try:
+                        from PIL import Image as PI, ImageTk
+                        tkimg = ImageTk.PhotoImage(PI.open(io.BytesIO(raw)).resize((sz,sz), PI.LANCZOS))
+                    except ImportError:
+                        tkimg = tk.PhotoImage(data=img_data[img_data.index(",")+1:])
+                        f = max(1, tkimg.width()//sz)
+                        if f>1: tkimg = tkimg.subsample(f,f)
+                    win._imgs.append(tkimg)
+                    tk.Label(cell, image=tkimg, bg=CARD).place(relx=.5, rely=.36, anchor="center")
+                    tk.Label(cell, text=label, fg=FG3, bg=CARD,
+                             font=("Segoe UI",6)).place(relx=.5, rely=.82, anchor="center")
+                    placed = True
+                except Exception as e:
+                    log.warning(f"Overlay img btn{i}: {e}")
+            if not placed:
+                icon = b.get("icon","") or "●"
+                tk.Label(cell, text=icon,  fg=FG,  bg=CARD,
+                         font=("Segoe UI Emoji",15)).place(relx=.5, rely=.36, anchor="center")
+                tk.Label(cell, text=label, fg=FG3, bg=CARD,
+                         font=("Segoe UI",6)).place(relx=.5, rely=.78, anchor="center")
 
-        # ── Séparateur ────────────────────────────────────────────────────
         tk.Frame(main, bg=BDR, height=1).pack(fill="x", padx=PAD, pady=(8,0))
 
         # ── Potards ───────────────────────────────────────────────────────
@@ -895,39 +926,65 @@ class ProfileOverlayWindow:
         pf.pack(padx=PAD, pady=(8,12))
         pots = profile.get("pots", {})
         for i in range(COLS):
-            p      = pots.get(str(i), {})
-            name   = (p.get("name") or f"Pot {i+1}")[:8]
-            action = POT_LABELS.get(p.get("action",""), (p.get("action","") or "—")[:8])
+            p       = pots.get(str(i), {})
+            pot_ov  = OV_POTS.get(str(i), OV_POTS.get(i, {}))
+            name    = (p.get("name") or f"Pot {i+1}")[:8]
+            action  = POT_LABELS.get(p.get("action",""), (p.get("action","") or "—")[:8])
+            custom_text = pot_ov.get("text","") if isinstance(pot_ov, dict) else ""
+            img_data    = pot_ov.get("image","") if isinstance(pot_ov, dict) else ""
+
             outer = tk.Frame(pf, bg=BDR)
             outer.grid(row=0, column=i, padx=GAP//2)
             cell = tk.Frame(outer, bg=BG3, width=CELL-2, height=CELL-2)
             cell.pack(padx=1, pady=1)
             cell.pack_propagate(False)
-            cv = tk.Canvas(cell, width=26, height=26, bg=BG3, highlightthickness=0)
-            cv.place(relx=.5, rely=.26, anchor="center")
-            cv.create_oval(1,  1,  25, 25, outline=FG3, width=1,   fill=BG4)
-            cv.create_oval(5,  5,  21, 21, outline=ACC, width=1.5, fill=BG)
-            cv.create_oval(10, 10, 16, 16, fill=ACC, outline="")
-            tk.Label(cell, text=name,   fg=FG,  bg=BG3,
-                     font=("Segoe UI",6,"bold")).place(relx=.5, rely=.65, anchor="center")
-            tk.Label(cell, text=action, fg=FG3, bg=BG3,
-                     font=("Segoe UI",5)).place(relx=.5, rely=.83, anchor="center")
 
-        # ── Fermeture après 3s ────────────────────────────────────────────
+            placed = False
+            if img_data and img_data.startswith("data:image"):
+                try:
+                    import io, base64 as b64
+                    raw = b64.b64decode(img_data[img_data.index(",")+1:])
+                    sz  = max(CELL-22, 14)
+                    try:
+                        from PIL import Image as PI, ImageTk
+                        tkimg = ImageTk.PhotoImage(PI.open(io.BytesIO(raw)).resize((sz,sz), PI.LANCZOS))
+                    except ImportError:
+                        tkimg = tk.PhotoImage(data=img_data[img_data.index(",")+1:])
+                        f = max(1, tkimg.width()//sz)
+                        if f>1: tkimg = tkimg.subsample(f,f)
+                    win._imgs.append(tkimg)
+                    tk.Label(cell, image=tkimg, bg=BG3).place(relx=.5, rely=.28, anchor="center")
+                    lbl = custom_text or name
+                    tk.Label(cell, text=lbl, fg=FG, bg=BG3,
+                             font=("Segoe UI",5,"bold")).place(relx=.5, rely=.80, anchor="center")
+                    placed = True
+                except Exception as e:
+                    log.warning(f"Overlay img pot{i}: {e}")
+            if not placed:
+                cv = tk.Canvas(cell, width=26, height=26, bg=BG3, highlightthickness=0)
+                cv.place(relx=.5, rely=.26, anchor="center")
+                cv.create_oval(1,1,25,25, outline=FG3, width=1,   fill=BG4)
+                cv.create_oval(5,5,21,21, outline=ACC, width=1.5, fill=BG3)
+                cv.create_oval(10,10,16,16, fill=ACC, outline="")
+                disp = custom_text or name
+                tk.Label(cell, text=disp,   fg=FG,  bg=BG3,
+                         font=("Segoe UI",6,"bold")).place(relx=.5, rely=.65, anchor="center")
+                if not custom_text:
+                    tk.Label(cell, text=action, fg=FG3, bg=BG3,
+                             font=("Segoe UI",5)).place(relx=.5, rely=.83, anchor="center")
+
         def _close():
             self._close_timer = None
             try:
                 if win.winfo_exists(): win.destroy()
             except: pass
-            if self._popup is win:
-                self._popup = None
-        self._close_timer = root.after(3000, _close)
+            if self._popup is win: self._popup = None
+        self._close_timer = root.after(DELAY, _close)
 
-    def show_profile(self, profile: dict):
-        """Affiche l'overlay pour ce profil. Thread-safe : peut être appelé
-        depuis n'importe quel thread (asyncio, ESP32 watcher, etc.)."""
+    def show_profile(self, profile: dict, ov_cfg: dict = None):
+        """Affiche l'overlay pour ce profil. Thread-safe."""
         if self._queue is not None:
-            try: self._queue.put_nowait(profile)
+            try: self._queue.put_nowait((profile, ov_cfg or {}))
             except Exception as e: log.warning(f"Overlay queue: {e}")
 
 # ── APP WATCHER ──────────────────────────────────────────────────────────────
@@ -1138,7 +1195,8 @@ class MacroDeck:
             key = obj.get("profile")
             profile = self.cfg.data.get("profiles", {}).get(key)
             if profile and self.overlay:
-                self.overlay.show_profile(profile)
+                ov_cfg = self.cfg.data.get("overlay", {})
+                self.overlay.show_profile(profile, ov_cfg)
         raw=json.dumps(obj)
         for ws in list(self.ws_clients):
             asyncio.ensure_future(ws.send(raw))
