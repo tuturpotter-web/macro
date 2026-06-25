@@ -239,7 +239,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;heigh
 .lf{color:var(--text3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── VIEW: SETTINGS ── */
-.settings-view{flex:1;overflow-y:auto;padding:24px}
+.settings-view{flex:1;overflow-y:auto;padding:24px;background:var(--bg0)}
 .settings-inner{max-width:560px}
 .settings-title{font-size:13px;font-weight:600;margin-bottom:18px}
 
@@ -1962,19 +1962,19 @@ function handleProtocolTestResult(m){
 // OVERLAY CONFIG
 // ═══════════════════════════════════════════════════════════════
 function getOverlayCfg() {
-  return (config && config.overlay) ? config.overlay : {cell_size:56,delay:3,position:"br",alpha:97,pots:{}};
+  return (cfg && cfg.overlay) ? cfg.overlay : {cell_size:56,delay:3,position:"br",alpha:97,pots:{}};
 }
 function initOverlayTab() {
-  const cfg = getOverlayCfg();
-  document.getElementById("ov_cell_size").value = cfg.cell_size||56;
-  document.getElementById("ov_delay").value     = cfg.delay||3;
-  document.getElementById("ov_position").value  = cfg.position||"br";
-  document.getElementById("ov_alpha").value     = cfg.alpha||97;
+  const ov = getOverlayCfg();
+  document.getElementById("ov_cell_size").value = ov.cell_size||56;
+  document.getElementById("ov_delay").value     = ov.delay||3;
+  document.getElementById("ov_position").value  = ov.position||"br";
+  document.getElementById("ov_alpha").value     = ov.alpha||97;
   renderOverlayPotsEditor();
 }
 function renderOverlayPotsEditor() {
-  const cfg = getOverlayCfg();
-  const profile = config&&config.profiles&&config.profiles[config.active_profile];
+  const ov = getOverlayCfg();
+  const profile = cfg&&cfg.profiles&&cfg.profiles[cfg.active_profile];
   const pots = (profile&&profile.pots)||{};
   let html = "";
   for (let i=0;i<4;i++) {
@@ -2009,10 +2009,10 @@ function onOvPotImgChosen(i, input) {
     img.onload = () => {
       const c = document.createElement("canvas"); c.width=64; c.height=64;
       c.getContext("2d").drawImage(img,0,0,64,64);
-      if(!config.overlay) config.overlay={cell_size:56,delay:3,position:"br",alpha:97,pots:{}};
-      if(!config.overlay.pots) config.overlay.pots={};
-      if(!config.overlay.pots[i]) config.overlay.pots[i]={};
-      config.overlay.pots[i].image = c.toDataURL("image/png",0.85);
+      if(!cfg.overlay) cfg.overlay={cell_size:56,delay:3,position:"br",alpha:97,pots:{}};
+      if(!cfg.overlay.pots) cfg.overlay.pots={};
+      if(!cfg.overlay.pots[i]) cfg.overlay.pots[i]={};
+      cfg.overlay.pots[i].image = c.toDataURL("image/png",0.85);
       renderOverlayPotsEditor();
     };
     img.src = e.target.result;
@@ -2020,24 +2020,24 @@ function onOvPotImgChosen(i, input) {
   reader.readAsDataURL(file);
 }
 function clearOvPotImg(i) {
-  if(config.overlay&&config.overlay.pots&&config.overlay.pots[i]) {
-    delete config.overlay.pots[i].image;
+  if(cfg.overlay&&cfg.overlay.pots&&cfg.overlay.pots[i]) {
+    delete cfg.overlay.pots[i].image;
     renderOverlayPotsEditor();
   }
 }
 function saveOverlayCfg() {
-  if(!config.overlay) config.overlay={};
-  config.overlay.cell_size = parseInt(document.getElementById("ov_cell_size").value)||56;
-  config.overlay.delay     = parseInt(document.getElementById("ov_delay").value)||3;
-  config.overlay.position  = document.getElementById("ov_position").value;
-  config.overlay.alpha     = parseInt(document.getElementById("ov_alpha").value)||97;
-  if(!config.overlay.pots) config.overlay.pots={};
+  if(!cfg.overlay) cfg.overlay={};
+  cfg.overlay.cell_size = parseInt(document.getElementById("ov_cell_size").value)||56;
+  cfg.overlay.delay     = parseInt(document.getElementById("ov_delay").value)||3;
+  cfg.overlay.position  = document.getElementById("ov_position").value;
+  cfg.overlay.alpha     = parseInt(document.getElementById("ov_alpha").value)||97;
+  if(!cfg.overlay.pots) cfg.overlay.pots={};
   for(let i=0;i<4;i++) {
-    if(!config.overlay.pots[i]) config.overlay.pots[i]={};
+    if(!cfg.overlay.pots[i]) cfg.overlay.pots[i]={};
     const t = document.getElementById(`ov_pot_text_${i}`);
-    if(t) config.overlay.pots[i].text = t.value;
+    if(t) cfg.overlay.pots[i].text = t.value;
   }
-  wsSend({type:"save_config",data:config});
+  wsSend({type:"save_config",data:cfg});
   const msg = document.getElementById("ovSaveMsg");
   msg.textContent="✓ Enregistré"; setTimeout(()=>msg.textContent="",2000);
 }
