@@ -653,7 +653,7 @@ class ImperiumApp:
         self.overlay=ProfileOverlay()
         self.engine=ActionEngine(self.cfg,self._on_profile_changed)
         self.transport=Transport(self._on_serial)
-        self._M={}; self._pot_pcts=[0,0,0,0]; self._logs=[]
+        self._M={}; self._pot_pcts=[0,0,0,0]; self._logs=[]; self._usb_cvs=[]
         self._log_filter="all"; self._ev_type="press"
         self._btn_cards={}; self._pot_cards={}; self._led_strips={}
         self._build_ui()
@@ -929,7 +929,7 @@ class ImperiumApp:
 
     def _make_pot(self,parent,idx,pd):
         SZ=60; frame=tk.Frame(parent,bg=C["bg2"])
-        cv=tk.Canvas(frame,width=SZ,height=SZ,bg=C["bg2"],highlightthickness=0,cursor="ns-resize"); cv.pack()
+        cv=tk.Canvas(frame,width=SZ,height=SZ,bg=C["bg2"],highlightthickness=0,cursor="sb_v_double_arrow"); cv.pack()
         cx=SZ//2; cy=SZ//2; R=SZ//2-5
         cv.create_oval(2,2,SZ-2,SZ-2,fill=C["bg3"],outline=C["border"],width=1.5)
         cv.create_oval(8,8,SZ-8,SZ-8,fill=C["bg0"],outline=C["border"],width=1)
